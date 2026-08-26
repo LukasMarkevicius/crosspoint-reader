@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CrossPoint Screensaver Preview</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <section class="panel controls-panel">
+      <div class="panel-header">
+        <p class="eyebrow">X4 Pro Preview Lab</p>
+        <h1>Screensaver Preview</h1>
+        <p class="intro">
+          Tune layouts here first, then flash only the versions worth testing on the reader.
+        </p>
+      </div>
+
+      <div class="control-group">
+        <label for="mode">Mode</label>
+        <select id="mode">
+          <option value="calendar">Calendar</option>
+          <option value="lifeGrid">Life Grid</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <label for="variant">Variant</label>
+        <select id="variant">
+          <option value="firmware">Firmware Match</option>
+          <option value="quiet">Quiet Card</option>
+          <option value="poster">Poster Date</option>
+        </select>
+      </div>
+
+      <div class="control-row">
+        <div class="control-group">
+          <label for="date">Date</label>
+          <input id="date" type="date">
+        </div>
+        <div class="control-group">
+          <label for="weekStart">Week Starts</label>
+          <select id="weekStart">
+            <option value="monday">Monday</option>
+            <option value="sunday">Sunday</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="control-row">
+        <div class="control-group">
+          <label for="birthDate">Birth Date</label>
+          <input id="birthDate" type="date">
+        </div>
+        <div class="control-group">
+          <label for="lifespan">Lifespan (years)</label>
+          <input id="lifespan" type="number" min="1" max="130" value="85">
+        </div>
+      </div>
+
+      <div class="control-row">
+        <div class="control-group">
+          <label for="gridShape">Life Grid Shape</label>
+          <select id="gridShape">
+            <option value="weeks">Weeks</option>
+            <option value="months">Months</option>
+          </select>
+        </div>
+        <div class="control-group">
+          <label for="accentStyle">Accent</label>
+          <select id="accentStyle">
+            <option value="shade">Shade</option>
+            <option value="frame">Frame</option>
+            <option value="solid">Solid</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="control-row">
+        <button id="todayButton" class="secondary-button" type="button">Use Today</button>
+        <button id="downloadButton" class="primary-button" type="button">Export Preview</button>
+      </div>
+
+      <div class="notes">
+        <p>Preview size: 480 x 800</p>
+        <p>The device still needs a real flash for final e-ink verification.</p>
+      </div>
+    </section>
+
+    <section class="panel preview-panel">
+      <div class="preview-header">
+        <div>
+          <p class="eyebrow">Canvas</p>
+          <h2 id="previewTitle">Calendar / Firmware Match</h2>
+        </div>
+        <p class="preview-meta" id="previewMeta">480 x 800 • X4 Pro</p>
+      </div>
+
+      <div class="device-stage">
+        <div class="device-frame">
+          <canvas id="previewCanvas" width="480" height="800" aria-label="Screensaver preview"></canvas>
+        </div>
+      </div>
+
+      <div class="variant-strip">
+        <button type="button" class="variant-chip is-active" data-variant="firmware">Firmware Match</button>
+        <button type="button" class="variant-chip" data-variant="quiet">Quiet Card</button>
+        <button type="button" class="variant-chip" data-variant="poster">Poster Date</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
