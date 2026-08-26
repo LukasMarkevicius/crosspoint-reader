@@ -451,6 +451,7 @@ Constraint: Physical button positions are fixed on hardware, but their logical f
 
 * Rule: All UI rendering must go through the GUI macro (UITheme). 
 * Do not hardcode fonts, colors, or positioning. This ensures orientation-aware layout consistency.
+* Sleep-screen exception: custom full-screen sleep layouts may position content directly, but any highlight behind text must be derived from the same `drawText()` anchor used by the normal glyphs. For calendar screens, place the day number first, then center the badge from `GfxRenderer::getTextBounds()` over that exact ink box. Do not tune the selected day with a separate visual offset path.
 
 ---
 

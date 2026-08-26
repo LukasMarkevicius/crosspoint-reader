@@ -225,21 +225,23 @@ function drawFirmwareCalendarGrid(date) {
     const centerX = cellX + cellWidth / 2;
     const centerY = cellY + cellHeight / 2 + 2;
 
-    const highlightCenterX = centerX + 2;
-    const highlightCenterY = centerY + 1;
+    const inkBounds = measureInkBounds(String(day), 22, "Georgia", "400");
+    const textX = centerX - inkBounds.width / 2;
+    const textY = centerY - 18;
 
     if (isToday) {
+      const inkCenterX = textX + inkBounds.centerX;
+      const inkCenterY = textY + inkBounds.centerY + 2;
       ctx.beginPath();
       ctx.fillStyle = "#191613";
-      ctx.arc(highlightCenterX, highlightCenterY, 26, 0, Math.PI * 2);
+      ctx.arc(inkCenterX, inkCenterY, 24, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    const inkBounds = measureInkBounds(String(day), 22, "Georgia", "400");
     textAtX(
       String(day),
-      isToday ? highlightCenterX - inkBounds.centerX : centerX,
-      isToday ? highlightCenterY - inkBounds.centerY - inkBounds.height / 2 : centerY - 18,
+      textX,
+      textY,
       22,
       "Georgia",
       "400",
