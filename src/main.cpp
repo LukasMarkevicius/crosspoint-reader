@@ -31,6 +31,9 @@
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
+#include "newsletters/NewsletterConfigStore.h"
+#include "newsletters/NewsletterStore.h"
+#include "newsletters/NewsletterSyncClient.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
@@ -54,6 +57,26 @@ constexpr unsigned long X4PRO_POWER_DOUBLE_CLICK_MS = 500;
 constexpr unsigned long X4PRO_POWER_CLICK_MAX_HOLD_MS = 300;
 constexpr unsigned long X4PRO_RECOVERY_SETTLE_MS = 20;
 constexpr unsigned long DEFAULT_RECOVERY_SETTLE_MS = 500;
+
+bool shouldRunNewsletterAutoSync() {
+  if (!NEWSLETTER_CONFIG.autoSyncEnabled || !NEWSLETTER_CONFIG.isConfigured()) return false;
+  if (WiFi.status() != WL_CONNECTED || activityManager.isReaderActivity()) return false;
+  HalClock::DateTime now;
+  if (!halClock.getDateTime(now, SETTINGS.clockUtcOffsetQ)) return false;
+  const int32_t todayKey = now.year * 10000 + static_cast<int32_t>(now.month) * 100 + now.day;
+  if (NEWSLETTER_STORE.getLastSuccessfulSyncDateKey() >= todayKey) return false;
+  return now.hour >= NEWSLETTER_CONFIG.syncHour();
+}
+
+void runNewsletterAutoSyncIfDue() {
+  static unsigned long lastAttemptAt = 0;
+  const unsigned long nowMs = millis();
+  if (nowMs - lastAttemptAt < 60000) return;
+  if (!shouldRunNewsletterAutoSync()) return;
+  lastAttemptAt = nowMs;
+  LOG_INF("NEWS", "Running scheduled newsletter sync");
+  NewsletterSyncClient::sync();
+}
 }  // namespace
 
 // A wake hold must never become an in-app power-button action.  Boot may continue
@@ -414,6 +437,8 @@ void setup() {
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
   OPDS_STORE.loadFromFile();
+  NEWSLETTER_CONFIG.loadFromFile();
+  NEWSLETTER_STORE.loadFromFile();
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
 
@@ -560,6 +585,7 @@ void loop() {
 
   gpio.setSharedConfirmPowerShortPressEmitsPower(SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
   gpio.update();
+  runNewsletterAutoSyncIfDue();
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
 
   renderer.setFadingFix(SETTINGS.fadingFix);

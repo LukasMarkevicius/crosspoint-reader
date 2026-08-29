@@ -27,6 +27,7 @@
 #include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "newsletters/NewsletterStore.h"
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
 
@@ -634,6 +635,7 @@ void SleepActivity::renderDefaultSleepScreen() const {
   renderer.drawImage(Logo120, (pageWidth - 120) / 2, (pageHeight - 120) / 2, 120, 120);
   renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 70, tr(STR_CROSSPOINT), true, EpdFontFamily::BOLD);
   renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 95, tr(STR_SLEEPING));
+  renderNewsletterUnreadFooter();
 
   // Make sleep screen dark unless light is selected in settings
   if (SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT) {
@@ -883,6 +885,7 @@ void SleepActivity::renderClockUnavailableSleepScreen() const {
   renderer.drawCenteredText(UI_12_FONT_ID, pageHeight / 2 - 34, tr(STR_CLOCK), true, EpdFontFamily::BOLD);
   renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, tr(STR_NOT_SET));
   renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 28, tr(STR_CLOCK_SYNC_NOW));
+  renderNewsletterUnreadFooter();
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
 }
 
@@ -961,5 +964,14 @@ void SleepActivity::renderClockSleepScreen() const {
     }
   }
 
+  renderNewsletterUnreadFooter();
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+}
+
+void SleepActivity::renderNewsletterUnreadFooter() const {
+  const int unread = NEWSLETTER_STORE.unreadCount();
+  if (unread <= 0) return;
+  char unreadBuf[32];
+  snprintf(unreadBuf, sizeof(unreadBuf), tr(STR_NEWSLETTER_UNREAD_COUNT), static_cast<unsigned>(unread));
+  renderer.drawCenteredText(SMALL_FONT_ID, renderer.getScreenHeight() - 24, unreadBuf, true);
 }

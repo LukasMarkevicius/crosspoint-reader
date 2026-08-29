@@ -25,6 +25,7 @@ class SleepActivity final : public Activity {
   void renderBlankSleepScreen() const;
   void renderClockSleepScreen() const;
   void renderClockUnavailableSleepScreen() const;
+  void renderNewsletterUnreadFooter() const;
 
   bool fromTimeout = false;
 };
