@@ -15,11 +15,58 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <SPI.h>
+#ifndef SIMULATOR
 #include <WiFi.h>
 #include <XteinkDetect.h>
+#endif
 #include <builtinFonts/all.h>
 #if FREEINK_CAP_TOUCH
+#ifndef SIMULATOR
 #include <esp_sntp.h>
+#endif
+#endif
+
+#ifdef SIMULATOR
+using esp_reset_reason_t = int;
+using esp_sleep_wakeup_cause_t = int;
+enum : int {
+  ESP_RST_UNKNOWN = 0,
+  ESP_RST_POWERON,
+  ESP_RST_EXT,
+  ESP_RST_SW,
+  ESP_RST_PANIC,
+  ESP_RST_INT_WDT,
+  ESP_RST_TASK_WDT,
+  ESP_RST_WDT,
+  ESP_RST_DEEPSLEEP,
+  ESP_RST_BROWNOUT,
+  ESP_RST_SDIO,
+  ESP_RST_USB,
+  ESP_RST_JTAG,
+  ESP_RST_EFUSE,
+  ESP_RST_PWR_GLITCH,
+  ESP_RST_CPU_LOCKUP
+};
+enum : int {
+  ESP_SLEEP_WAKEUP_UNDEFINED = 0,
+  ESP_SLEEP_WAKEUP_ALL,
+  ESP_SLEEP_WAKEUP_EXT0,
+  ESP_SLEEP_WAKEUP_EXT1,
+  ESP_SLEEP_WAKEUP_TIMER,
+  ESP_SLEEP_WAKEUP_TOUCHPAD,
+  ESP_SLEEP_WAKEUP_ULP,
+  ESP_SLEEP_WAKEUP_GPIO,
+  ESP_SLEEP_WAKEUP_UART,
+  ESP_SLEEP_WAKEUP_WIFI,
+  ESP_SLEEP_WAKEUP_COCPU,
+  ESP_SLEEP_WAKEUP_COCPU_TRAP_TRIG,
+  ESP_SLEEP_WAKEUP_BT
+};
+inline esp_reset_reason_t esp_reset_reason() { return ESP_RST_UNKNOWN; }
+inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_WAKEUP_UNDEFINED; }
+#else
+#include <esp_sleep.h>
+#include <esp_system.h>
 #endif
 
 #include <cstring>
@@ -40,6 +87,10 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
+#ifdef SIMULATOR
+#include "simulator/SimulatorHomeKeyInput.h"
+#endif
+#include "util/ClockDateTimeCompat.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 
@@ -59,13 +110,17 @@ constexpr unsigned long X4PRO_RECOVERY_SETTLE_MS = 20;
 constexpr unsigned long DEFAULT_RECOVERY_SETTLE_MS = 500;
 
 bool shouldRunNewsletterAutoSync() {
+#ifdef SIMULATOR
+  return false;
+#else
   if (!NEWSLETTER_CONFIG.autoSyncEnabled || !NEWSLETTER_CONFIG.isConfigured()) return false;
   if (WiFi.status() != WL_CONNECTED || activityManager.isReaderActivity()) return false;
-  HalClock::DateTime now;
-  if (!halClock.getDateTime(now, SETTINGS.clockUtcOffsetQ)) return false;
+  ClockDateTimeCompat now;
+  if (!readClockDateTimeCompat(now, SETTINGS.clockUtcOffsetQ)) return false;
   const int32_t todayKey = now.year * 10000 + static_cast<int32_t>(now.month) * 100 + now.day;
   if (NEWSLETTER_STORE.getLastSuccessfulSyncDateKey() >= todayKey) return false;
   return now.hour >= NEWSLETTER_CONFIG.syncHour();
+#endif
 }
 
 void runNewsletterAutoSyncIfDue() {
@@ -178,6 +233,9 @@ static bool deepSleepInProgress = false;
 
 #if FREEINK_CAP_TOUCH
 static bool finishWifiSessionWithoutRestart() {
+#ifdef SIMULATOR
+  return false;
+#else
   if (!BoardConfig::hasTouch()) return false;
 
   // A software reset does not cycle externally powered touch/frontlight rails.
@@ -189,6 +247,7 @@ static bool finishWifiSessionWithoutRestart() {
   delay(100);
   LOG_DBG("MAIN", "WiFi stopped without restart on touch device");
   return true;
+#endif
 }
 #endif
 
@@ -299,10 +358,12 @@ void enterDeepSleep(bool fromTimeout = false) {
 
   // Tear down WiFi so the modem power domain isn't held alive across deep sleep.
   // Wake from deep sleep is effectively a chip reset, so no state needs to survive.
+#ifndef SIMULATOR
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
   }
+#endif
 
   halTiltSensor.deepSleep();
   display.deepSleep();
@@ -312,7 +373,7 @@ void enterDeepSleep(bool fromTimeout = false) {
 }
 
 void setupDisplayAndFonts(bool seamless = false) {
-#if !FREEINK_MCU_C3
+#if !defined(SIMULATOR) && !FREEINK_MCU_C3
   // C3 resolves its controller in HalGPIO::begin() before SPI claims the
   // display pins. X4 Pro skips that C3-only path, so probe here before
   // display.begin() selects and initializes its panel driver.
@@ -451,8 +512,12 @@ void setup() {
   switch (wakeupReason) {
     case HalGPIO::WakeupReason::PowerButton:
       LOG_DBG("MAIN", "Verifying power button press duration");
+  #ifdef SIMULATOR
+      if (!gpio.verifyPowerButtonWakeup()) {
+  #else
       if (!gpio.verifyPowerButtonWakeup(SETTINGS.getPowerButtonDuration(),
                                         SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP)) {
+  #endif
         powerManager.startDeepSleep(gpio);
       }
       wakePowerReleasePending = true;
@@ -585,12 +650,15 @@ void loop() {
 
   gpio.setSharedConfirmPowerShortPressEmitsPower(SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
   gpio.update();
+#ifdef SIMULATOR
+  simulatorHomeKeyInput.update();
+#endif
   runNewsletterAutoSyncIfDue();
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
 
   renderer.setFadingFix(SETTINGS.fadingFix);
 
-  if (Serial && millis() - lastMemPrint >= 10000) {
+  if (millis() - lastMemPrint >= 10000) {
     LOG_INF("MEM", "Free: %d bytes, Total: %d bytes, Min Free: %d bytes, MaxAlloc: %d bytes", ESP.getFreeHeap(),
             ESP.getHeapSize(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
     lastMemPrint = millis();

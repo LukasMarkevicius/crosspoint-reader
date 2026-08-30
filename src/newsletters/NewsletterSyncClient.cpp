@@ -11,8 +11,10 @@
 #include <cctype>
 #include <cstring>
 
+#include "CrossPointSettings.h"
 #include "NewsletterConfigStore.h"
 #include "network/HttpDownloader.h"
+#include "util/ClockDateTimeCompat.h"
 
 namespace {
 constexpr uint32_t MIN_FREE_FOR_TLS = 35000;
@@ -253,8 +255,8 @@ int64_t NewsletterSyncClient::parseRfc822Date(const std::string& text) {
 }
 
 int32_t NewsletterSyncClient::currentLocalDateKey() {
-  HalClock::DateTime now;
-  if (!halClock.getDateTime(now)) return 0;
+  ClockDateTimeCompat now;
+  if (!readClockDateTimeCompat(now, SETTINGS.clockUtcOffsetQ)) return 0;
   return now.year * 10000 + static_cast<int32_t>(now.month) * 100 + now.day;
 }
 

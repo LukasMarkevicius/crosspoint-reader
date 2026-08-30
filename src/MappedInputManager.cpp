@@ -4,6 +4,9 @@
 #include <FreeInkUICore.h>
 #include <GfxRenderer.h>
 #include <HalFrontlight.h>
+#ifdef SIMULATOR
+#include "simulator/SimulatorHomeKeyInput.h"
+#endif
 
 #include <algorithm>
 #include <cstdlib>
@@ -277,10 +280,28 @@ bool MappedInputManager::wasBottomEdgeUpSwipe() const { return wasEdgeSwipe(fui:
 bool MappedInputManager::wasMenuGesture() const { return wasTopEdgeDownSwipe(); }
 
 bool MappedInputManager::wasHomeGesture() const {
+#ifdef SIMULATOR
+#ifdef SIMULATOR_DEVICE_X4_PRO
+  return simulatorHomeKeyInput.wasTapped();
+#else
+  return wasBottomEdgeUpSwipe();
+#endif
+#else
   return gpio.hasHomeKey() ? gpio.wasHomeKeyTapped() : wasBottomEdgeUpSwipe();
+#endif
 }
 
-bool MappedInputManager::wasHomeKeyHold() const { return gpio.hasHomeKey() && gpio.wasHomeKeyLongPressed(); }
+bool MappedInputManager::wasHomeKeyHold() const {
+#ifdef SIMULATOR
+#ifdef SIMULATOR_DEVICE_X4_PRO
+  return simulatorHomeKeyInput.wasLongPressed();
+#else
+  return false;
+#endif
+#else
+  return gpio.hasHomeKey() && gpio.wasHomeKeyLongPressed();
+#endif
+}
 
 bool MappedInputManager::wasLightPanelGesture() const {
   // On lightless boards the same edge remains available to the reader menu.
