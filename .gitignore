@@ -31,3 +31,8 @@ lib/EpdFont/scripts/output/
 /sdkconfig.*
 sdkconfig.sticky
 flake.*
+
+.pio/*
+.pio-build-sim/*
+.pio-build-x4pro/*
+.pio-core/*

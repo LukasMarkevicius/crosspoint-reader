@@ -210,6 +210,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     sleepScreenValues[CrossPointSettings::QUICK_RESUME] = StrId::STR_QUICK_RESUME;
     sleepScreenValues[CrossPointSettings::TRANSPARENT_CUSTOM] = StrId::STR_TRANSPARENT;
     sleepScreenValues[CrossPointSettings::CLOCK] = StrId::STR_CLOCK;
+    sleepScreenValues[CrossPointSettings::CALENDAR_STATS] = StrId::STR_CALENDAR_STATS;
 
     std::vector<StrId> statusBarClockValues(CrossPointSettings::STATUS_BAR_CLOCK_MODE_COUNT);
     statusBarClockValues[CrossPointSettings::STATUS_BAR_CLOCK_HIDE] = StrId::STR_HIDE;

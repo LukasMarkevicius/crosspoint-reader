@@ -24,6 +24,7 @@ class SleepActivity final : public Activity {
   void renderTransparentCustomSleepScreen() const;
   void renderBlankSleepScreen() const;
   void renderClockSleepScreen() const;
+  void renderCalendarStatsSleepScreen() const;
   void renderClockUnavailableSleepScreen() const;
   void renderNewsletterUnreadFooter() const;
 
