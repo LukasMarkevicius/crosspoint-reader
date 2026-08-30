@@ -454,6 +454,7 @@ Constraint: Physical button positions are fixed on hardware, but their logical f
 * Do not hardcode fonts, colors, or positioning. This ensures orientation-aware layout consistency.
 * Sleep-screen exception: custom full-screen sleep layouts may position content directly, but any highlight behind text must be derived from the same `drawText()` anchor used by the normal glyphs. For calendar screens, place the day number first, then center the badge from `GfxRenderer::getTextBounds()` over that exact ink box. Do not tune the selected day with a separate visual offset path.
 * Activity-result exception: do not kick off blocking network or SD work directly inside a `startActivityForResult()` callback. Set state, request a repaint, and defer the heavy work to the next normal `loop()` tick; starting TLS/sync while the child activity is still unwinding can crash the device.
+* Preview exception: the PlatformIO simulator is the supported preview path for UI work. Avoid maintaining separate visual-only preview tools that can drift from firmware rendering and input behavior.
 
 ---
 

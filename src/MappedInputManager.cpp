@@ -17,7 +17,6 @@
 namespace fui = freeink::ui;
 
 void MappedInputManager::update() const {
-  gpio.update();
   for (uint8_t value = 0; value <= static_cast<uint8_t>(Button::ScreenDown); ++value) {
     if (!isPressed(static_cast<Button>(value))) longPressFiredButtons &= ~(1u << value);
   }

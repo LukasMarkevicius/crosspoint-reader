@@ -1,17 +1,9 @@
 #include "ReadingStatsActivity.h"
 
-#include <Epub.h>
-#include <FsHelpers.h>
 #include <I18n.h>
-#include <Txt.h>
-#include <Xtc.h>
-
-#include <algorithm>
-
-#include "CrossPointState.h"
-#include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "reading_stats/CurrentReadingStatsSummary.h"
 
 namespace {
 constexpr int CARD_GAP = 14;
@@ -28,60 +20,16 @@ void drawMetric(const GfxRenderer& renderer, const int centerX, const int valueY
   const auto labelBounds = renderer.getTextBounds(LABEL_FONT, label);
   renderer.drawText(LABEL_FONT, centerX - labelBounds.width / 2, valueY + renderer.getLineHeight(VALUE_FONT) + 6, label, true);
 }
-
-const RecentBook* findRecentBook(const std::string& path) {
-  const auto& recentBooks = RECENT_BOOKS.getBooks();
-  const auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
-                               [&path](const RecentBook& book) { return book.path == path; });
-  return it == recentBooks.end() ? nullptr : &(*it);
-}
 }  // namespace
 
-std::string ReadingStatsActivity::deriveCachePath(const std::string& bookPath) {
-  if (bookPath.empty()) return {};
-  if (FsHelpers::hasXtcExtension(bookPath)) {
-    Xtc xtc(bookPath, "/.crosspoint");
-    return xtc.getCachePath();
-  }
-  if (FsHelpers::hasTxtExtension(bookPath) || FsHelpers::hasMarkdownExtension(bookPath)) {
-    Txt txt(bookPath, "/.crosspoint");
-    return txt.getCachePath();
-  }
-  Epub epub(bookPath, "/.crosspoint");
-  return epub.getCachePath();
-}
-
 void ReadingStatsActivity::loadStats() {
-  globalStats = GlobalReadingStats::load();
-  currentBookPath.clear();
-  currentBookTitle.clear();
-  currentBookAuthor.clear();
-  currentBookStats = {};
-  hasCurrentBook = false;
-
-  if (!APP_STATE.openEpubPath.empty() && Storage.exists(APP_STATE.openEpubPath.c_str())) {
-    currentBookPath = APP_STATE.openEpubPath;
-  } else {
-    const auto& recentBooks = RECENT_BOOKS.getBooks();
-    if (!recentBooks.empty()) currentBookPath = recentBooks[0].path;
-  }
-  if (currentBookPath.empty()) return;
-
-  if (const RecentBook* book = findRecentBook(currentBookPath)) {
-    currentBookTitle = book->title;
-    currentBookAuthor = book->author;
-  } else {
-    const RecentBook fallbackBook = RECENT_BOOKS.getDataFromBook(currentBookPath);
-    currentBookTitle = fallbackBook.title;
-    currentBookAuthor = fallbackBook.author;
-  }
-  if (currentBookTitle.empty()) currentBookTitle = currentBookPath;
-
-  const std::string cachePath = deriveCachePath(currentBookPath);
-  if (cachePath.empty()) return;
-  currentBookStats = BookReadingStats::load(cachePath);
-  hasCurrentBook = currentBookStats.sessionCount > 0 || currentBookStats.totalReadingSeconds > 0 ||
-                   currentBookStats.totalPagesTurned > 0;
+  const CurrentReadingStatsSummary summary = loadCurrentReadingStatsSummary();
+  globalStats = summary.globalStats;
+  currentBookPath = summary.currentBookPath;
+  currentBookTitle = summary.currentBookTitle;
+  currentBookAuthor = summary.currentBookAuthor;
+  currentBookStats = summary.currentBookStats;
+  hasCurrentBook = summary.hasBookContext;
 }
 
 void ReadingStatsActivity::onEnter() {

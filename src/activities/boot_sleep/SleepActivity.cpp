@@ -14,8 +14,6 @@
 #include <PNGdec.h>
 #include <Txt.h>
 #include <Xtc.h>
-
-#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -24,13 +22,11 @@
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
-#include "RecentBooksStore.h"
 #include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "newsletters/NewsletterStore.h"
-#include "reading_stats/BookReadingStats.h"
-#include "reading_stats/GlobalReadingStats.h"
+#include "reading_stats/CurrentReadingStatsSummary.h"
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
 #include "util/ClockDateTimeCompat.h"
@@ -65,79 +61,6 @@ struct OverlayBmpInfo {
   uint32_t dataOffset = 0;
   uint32_t rowBytes = 0;
 };
-
-struct SleepReadingStatsSummary {
-  std::string currentBookPath;
-  std::string currentBookTitle;
-  std::string currentBookAuthor;
-  BookReadingStats currentBookStats;
-  GlobalReadingStats globalStats;
-  bool hasBookContext = false;
-};
-
-bool isLeapYear(const uint16_t year) {
-  if ((year % 4) != 0) return false;
-  if ((year % 100) != 0) return true;
-  return (year % 400) == 0;
-}
-
-uint8_t sleepScreenDaysInMonth(const uint16_t year, const uint8_t month) {
-  static constexpr uint8_t DAYS[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-  if (month < 1 || month > 12) return 31;
-  if (month == 2 && isLeapYear(year)) return 29;
-  return DAYS[month - 1];
-}
-
-const RecentBook* findRecentBookForPath(const std::string& path) {
-  const auto& recentBooks = RECENT_BOOKS.getBooks();
-  const auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
-                               [&path](const RecentBook& book) { return book.path == path; });
-  return it == recentBooks.end() ? nullptr : &(*it);
-}
-
-std::string deriveReadingStatsCachePath(const std::string& bookPath) {
-  if (bookPath.empty()) return {};
-  if (FsHelpers::hasXtcExtension(bookPath)) {
-    Xtc xtc(bookPath, "/.crosspoint");
-    return xtc.getCachePath();
-  }
-  if (FsHelpers::hasTxtExtension(bookPath) || FsHelpers::hasMarkdownExtension(bookPath)) {
-    Txt txt(bookPath, "/.crosspoint");
-    return txt.getCachePath();
-  }
-  Epub epub(bookPath, "/.crosspoint");
-  return epub.getCachePath();
-}
-
-SleepReadingStatsSummary loadSleepReadingStatsSummary() {
-  SleepReadingStatsSummary summary;
-  summary.globalStats = GlobalReadingStats::load();
-
-  if (!APP_STATE.openEpubPath.empty() && Storage.exists(APP_STATE.openEpubPath.c_str())) {
-    summary.currentBookPath = APP_STATE.openEpubPath;
-  } else {
-    const auto& recentBooks = RECENT_BOOKS.getBooks();
-    if (!recentBooks.empty()) summary.currentBookPath = recentBooks[0].path;
-  }
-
-  if (summary.currentBookPath.empty()) return summary;
-
-  if (const RecentBook* recentBook = findRecentBookForPath(summary.currentBookPath)) {
-    summary.currentBookTitle = recentBook->title;
-    summary.currentBookAuthor = recentBook->author;
-  } else {
-    const RecentBook fallbackBook = RECENT_BOOKS.getDataFromBook(summary.currentBookPath);
-    summary.currentBookTitle = fallbackBook.title;
-    summary.currentBookAuthor = fallbackBook.author;
-  }
-
-  if (summary.currentBookTitle.empty()) summary.currentBookTitle = summary.currentBookPath;
-  summary.hasBookContext = !summary.currentBookTitle.empty();
-
-  const std::string cachePath = deriveReadingStatsCachePath(summary.currentBookPath);
-  if (!cachePath.empty()) summary.currentBookStats = BookReadingStats::load(cachePath);
-  return summary;
-}
 
 void drawSleepMetric(const GfxRenderer& renderer, const int centerX, const int valueY, const char* value, const char* label) {
   const auto valueBounds = renderer.getTextBounds(UI_12_FONT_ID, value, EpdFontFamily::BOLD);
@@ -999,7 +922,7 @@ void SleepActivity::renderClockSleepScreen() const {
 
   const int monthStartWeekday = (static_cast<int>(now.weekday) - ((static_cast<int>(now.day) - 1) % 7) + 7) % 7;
   const int startColumn = (monthStartWeekday + 6) % 7;  // Monday-first
-  const int monthDays = sleepScreenDaysInMonth(now.year, now.month);
+  const int monthDays = clockDateTimeCompat::daysInMonth(now.year, now.month);
 
   for (int col = 0; col < 7; col++) {
     const int centerX = contentLeft + col * cellWidth + cellWidth / 2;
@@ -1050,7 +973,7 @@ void SleepActivity::renderCalendarStatsSleepScreen() const {
     return;
   }
 
-  const SleepReadingStatsSummary stats = loadSleepReadingStatsSummary();
+  const CurrentReadingStatsSummary stats = loadCurrentReadingStatsSummary();
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
   int viewTop = 0;
@@ -1090,7 +1013,7 @@ void SleepActivity::renderCalendarStatsSleepScreen() const {
 
   const int monthStartWeekday = (static_cast<int>(now.weekday) - ((static_cast<int>(now.day) - 1) % 7) + 7) % 7;
   const int startColumn = (monthStartWeekday + 6) % 7;
-  const int monthDays = sleepScreenDaysInMonth(now.year, now.month);
+  const int monthDays = clockDateTimeCompat::daysInMonth(now.year, now.month);
 
   for (int col = 0; col < 7; col++) {
     const int centerX = contentLeft + col * cellWidth + cellWidth / 2;
@@ -1179,20 +1102,16 @@ void SleepActivity::renderCalendarStatsSleepScreen() const {
   drawSleepMetric(renderer, contentLeft + contentWidth / 2, allBooksMetricY, totalTimeBuf, tr(STR_STATS_TIME_LBL));
   drawSleepMetric(renderer, contentLeft + (contentWidth * 5) / 6, allBooksMetricY, totalPagesBuf, tr(STR_STATS_PAGES_LBL));
 
-  const int unread = NEWSLETTER_STORE.unreadCount();
-  if (unread > 0) {
-    char unreadBuf[32];
-    snprintf(unreadBuf, sizeof(unreadBuf), tr(STR_NEWSLETTER_UNREAD_COUNT), static_cast<unsigned>(unread));
-    renderer.drawCenteredText(SMALL_FONT_ID, footerY, unreadBuf, true);
-  }
+  renderNewsletterUnreadFooter(footerY);
 
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
 }
 
-void SleepActivity::renderNewsletterUnreadFooter() const {
+void SleepActivity::renderNewsletterUnreadFooter(const int y) const {
   const int unread = NEWSLETTER_STORE.unreadCount();
   if (unread <= 0) return;
   char unreadBuf[32];
   snprintf(unreadBuf, sizeof(unreadBuf), tr(STR_NEWSLETTER_UNREAD_COUNT), static_cast<unsigned>(unread));
-  renderer.drawCenteredText(SMALL_FONT_ID, renderer.getScreenHeight() - 24, unreadBuf, true);
+  const int footerY = y >= 0 ? y : renderer.getScreenHeight() - 24;
+  renderer.drawCenteredText(SMALL_FONT_ID, footerY, unreadBuf, true);
 }

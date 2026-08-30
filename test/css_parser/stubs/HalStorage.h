@@ -52,12 +52,26 @@ class HalFile {
   std::FILE* file_ = nullptr;
 };
 
+enum class UsbDriveState : uint8_t {
+  Unsupported,
+  WaitingForHost,
+  Connected,
+  Ejected,
+  Disconnected,
+  IoError,
+};
+
 class HalStorage {
  public:
   static HalStorage& getInstance() {
     static HalStorage instance;
     return instance;
   }
+
+  bool beginUsbDrive() { return false; }
+  bool disconnectUsbDriveHost() { return false; }
+  void endUsbDrive() {}
+  UsbDriveState usbDriveState() const { return UsbDriveState::Unsupported; }
 
   bool exists(const char* path) const {
     std::FILE* file = std::fopen(path, "rb");

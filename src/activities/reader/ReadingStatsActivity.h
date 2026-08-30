@@ -15,7 +15,6 @@ class ReadingStatsActivity final : public Activity {
   bool hasCurrentBook = false;
   bool useProvidedStats = false;
 
-  static std::string deriveCachePath(const std::string& bookPath);
   void loadStats();
   void drawStatsCard(int x, int y, int w, int h, const char* title, const char* subtitle, uint32_t sessions,
                      uint32_t readingSeconds, uint32_t pagesTurned) const;
