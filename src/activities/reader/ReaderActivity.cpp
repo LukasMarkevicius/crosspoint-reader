@@ -1,6 +1,7 @@
 #include "ReaderActivity.h"
 
 #include <FsHelpers.h>
+#include <HalClock.h>
 #include <HalStorage.h>
 #include <Memory.h>
 
@@ -14,6 +15,12 @@
 #include "SdCardFontSystem.h"
 #include "TxtReaderActivity.h"
 #include "XtcReaderActivity.h"
+#include "reading_stats/BookReadingStats.h"
+#include "reading_stats/GlobalReadingStats.h"
+
+namespace {
+constexpr unsigned long READING_STATS_IDLE_TIMEOUT_MS = 3UL * 60UL * 1000UL;
+}  // namespace
 
 ReaderActivity::ReaderActivity(const char* name, GfxRenderer& renderer, MappedInputManager& mappedInput,
                                std::string bookPath, const bool allowFastInitialRefresh)
@@ -66,10 +73,12 @@ void ReaderActivity::onEnter() {
   APP_STATE.openEpubPath = bookPath;
   APP_STATE.saveToFile();
   RECENT_BOOKS.addBook(bookPath, getBookTitle(), getBookAuthor(), getBookThumbBmpPath());
+  beginReadingStatsSession();
   requestUpdate();
 }
 
 void ReaderActivity::onExit() {
+  flushReadingStatsSession();
   Activity::onExit();
 
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
@@ -93,9 +102,12 @@ void ReaderActivity::clearEndOfBookOptionsIfNeeded() {
   endOfBookOptions.reset();
 }
 
+bool ReaderActivity::endOfBookMenuActive() const {
+  return isAtEndOfBook() && endOfBookOptionsReady.load(std::memory_order_acquire) && endOfBookOptions->menuActive();
+}
+
 bool ReaderActivity::handleEndOfBookMenu(const bool suppressConfirmRelease) {
-  if (!isAtEndOfBook() || !endOfBookOptionsReady.load(std::memory_order_acquire) || !endOfBookOptions->menuActive() ||
-      suppressConfirmRelease) {
+  if (suppressConfirmRelease || !endOfBookMenuActive()) {
     return false;
   }
 
@@ -137,6 +149,7 @@ bool ReaderActivity::handleEndOfBookPageTurn(const bool prevTriggered, const boo
 }
 
 void ReaderActivity::loop() {
+  tickReadingStatsSession();
   clearEndOfBookOptionsIfNeeded();
   if (handleEndOfBookMenu()) return;
   if (handleFormatInput()) return;
@@ -151,22 +164,87 @@ void ReaderActivity::loop() {
 
   const unsigned long heldMs = (touch.prev || touch.next) ? touch.heldMs : mappedInput.getHeldTime();
   const bool skip =
-      !fromTilt && SETTINGS.longPressButtonBehavior == SETTINGS.CHAPTER_SKIP && heldMs > ReaderUtils::SKIP_HOLD_MS;
+      !fromTilt && SETTINGS.longPressButtonBehavior == SETTINGS.CHAPTER_SKIP && heldMs >= ReaderUtils::SKIP_HOLD_MS;
 
   if (prevTriggered) {
     if (skip) {
-      skipPages(-10);
+      if (skipPages(-10)) noteReadingStatsInteraction(10);
     } else {
-      pageTurn(false);
+      if (pageTurn(false)) noteReadingStatsInteraction(1);
     }
   } else {
     if (skip) {
-      skipPages(10);
+      if (skipPages(10)) noteReadingStatsInteraction(10);
     } else {
-      pageTurn(true);
+      if (pageTurn(true)) noteReadingStatsInteraction(1);
     }
   }
   requestUpdate();
+}
+
+void ReaderActivity::beginReadingStatsSession() {
+  readingStatsLastSampleMs = millis();
+  readingStatsLastInteractionMs = readingStatsLastSampleMs;
+  readingStatsAccumulatedMs = 0;
+  readingStatsPagesTurned = 0;
+  readingStatsSessionOpen = true;
+  hasReadingStatsSessionStart = getCurrentLocalReadingStatsDateTime(readingStatsSessionStart);
+}
+
+void ReaderActivity::tickReadingStatsSession() {
+  if (!readingStatsSessionOpen) return;
+
+  const unsigned long nowMs = millis();
+  const unsigned long activeUntilMs = readingStatsLastInteractionMs + READING_STATS_IDLE_TIMEOUT_MS;
+  const unsigned long boundedNowMs = nowMs < activeUntilMs ? nowMs : activeUntilMs;
+  if (boundedNowMs > readingStatsLastSampleMs) {
+    readingStatsAccumulatedMs += boundedNowMs - readingStatsLastSampleMs;
+  }
+  readingStatsLastSampleMs = nowMs;
+}
+
+void ReaderActivity::noteReadingStatsInteraction(const uint16_t pageTurns) {
+  if (!readingStatsSessionOpen) return;
+  tickReadingStatsSession();
+  readingStatsLastInteractionMs = millis();
+  readingStatsPagesTurned += pageTurns;
+}
+
+void ReaderActivity::flushReadingStatsSession() {
+  if (!readingStatsSessionOpen) return;
+  tickReadingStatsSession();
+  readingStatsSessionOpen = false;
+
+  const std::string cachePath = getBookCachePath();
+  if (cachePath.empty()) {
+    LOG_ERR("RDS", "Missing cache path for %s", bookPath.c_str());
+    return;
+  }
+
+  BookReadingStats bookStats = BookReadingStats::load(cachePath);
+  GlobalReadingStats globalStats = GlobalReadingStats::load();
+  const uint32_t readingSeconds = readingStatsAccumulatedMs / 1000UL;
+
+  if (readingSeconds >= 60) {
+    bookStats.sessionCount++;
+    globalStats.totalSessions++;
+  }
+  if (readingSeconds >= 10) {
+    bookStats.totalReadingSeconds += readingSeconds;
+    bookStats.totalPagesTurned += readingStatsPagesTurned;
+    globalStats.totalReadingSeconds += readingSeconds;
+    globalStats.totalPagesTurned += readingStatsPagesTurned;
+    if (hasReadingStatsSessionStart) {
+      bookStats.recordReadingSpan(readingStatsSessionStart, readingSeconds);
+      globalStats.recordReadingSpan(readingStatsSessionStart, readingSeconds);
+      if (readingSeconds >= 120 && !bookStats.startDateManual && !bookStats.startDate.isValid()) {
+        bookStats.startDate = readingStatsSessionStart.date;
+      }
+    }
+  }
+
+  bookStats.save(cachePath);
+  globalStats.save();
 }
 
 void ReaderActivity::render(RenderLock&&) {

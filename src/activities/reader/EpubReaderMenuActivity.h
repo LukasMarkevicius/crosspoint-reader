@@ -19,6 +19,7 @@ class EpubReaderMenuActivity final : public UiListActivity {
     FRONTLIGHT,
     GO_TO_PERCENT,
     AUTO_PAGE_TURN,
+    READING_STATS,
     ROTATE_SCREEN,
     BOOKMARKS,
     TOGGLE_BOOKMARK,
@@ -30,6 +31,13 @@ class EpubReaderMenuActivity final : public UiListActivity {
     DICTIONARY
   };
 
+  struct MenuItem {
+    MenuAction action;
+    StrId labelId;
+  };
+
+  static void buildMenuItems(std::vector<MenuItem>& items, bool hasFootnotes, bool hasBookmarks);
+
   explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,
                                   const int currentPage, const int totalPages, const int bookProgressPercent,
                                   const uint8_t currentOrientation, const bool hasFootnotes, bool hasBookmarks);
@@ -38,13 +46,6 @@ class EpubReaderMenuActivity final : public UiListActivity {
   bool handleHomeGesture() override;
 
  private:
-  struct MenuItem {
-    MenuAction action;
-    StrId labelId;
-  };
-
-  static std::vector<MenuItem> buildMenuItems(bool hasFootnotes, bool hasBookmarks);
-
   // Row storage: menuItems is at most MAX_MENU_ITEMS, so a
   // fixed-capacity array avoids any heap allocation for the row list. Labels
   // are set once in the constructor (buildMenuRowItems()); buildScreen()
@@ -67,7 +68,7 @@ class EpubReaderMenuActivity final : public UiListActivity {
   void closeCancelled();
 
   // Fixed menu layout
-  const std::vector<MenuItem> menuItems;
+  std::vector<MenuItem> menuItems;
 
   OptionPopup optionPopup;
   std::string title = "Reader Menu";

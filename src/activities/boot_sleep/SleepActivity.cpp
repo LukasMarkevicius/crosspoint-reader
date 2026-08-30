@@ -5,6 +5,7 @@
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalClock.h>
 #include <HalDisplay.h>
 #include <HalGPIO.h>
 #include <HalStorage.h>
@@ -13,8 +14,6 @@
 #include <PNGdec.h>
 #include <Txt.h>
 #include <Xtc.h>
-
-#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -26,8 +25,11 @@
 #include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "newsletters/NewsletterStore.h"
+#include "reading_stats/CurrentReadingStatsSummary.h"
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
+#include "util/ClockDateTimeCompat.h"
 
 namespace {
 
@@ -38,6 +40,12 @@ constexpr char TRANSPARENT_SLEEP_DIR[] = "/.sleep-overlay";
 constexpr char TRANSPARENT_SLEEP_LEGACY_DIR[] = "/sleep-overlay";
 constexpr size_t MAX_SLEEP_FILE_NAME_LEN = 256;
 constexpr uint8_t MIN_VISIBLE_ALPHA = 8;
+constexpr const char* WEEKDAY_NAMES[] = {"SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY",
+                                         "THURSDAY", "FRIDAY", "SATURDAY"};
+constexpr const char* MONTH_NAMES[] = {"JANUARY",   "FEBRUARY", "MARCH",    "APRIL",
+                                       "MAY",       "JUNE",     "JULY",     "AUGUST",
+                                       "SEPTEMBER", "OCTOBER",  "NOVEMBER", "DECEMBER"};
+constexpr const char* CALENDAR_HEADERS[] = {"M", "T", "W", "T", "F", "S", "S"};
 
 struct BitmapPlacement {
   int x = 0;
@@ -53,6 +61,26 @@ struct OverlayBmpInfo {
   uint32_t dataOffset = 0;
   uint32_t rowBytes = 0;
 };
+
+void drawSleepMetric(const GfxRenderer& renderer, const int centerX, const int valueY, const char* value, const char* label) {
+  const auto valueBounds = renderer.getTextBounds(UI_12_FONT_ID, value, EpdFontFamily::BOLD);
+  renderer.drawText(UI_12_FONT_ID, centerX - valueBounds.width / 2, valueY, value, true, EpdFontFamily::BOLD);
+
+  const auto labelBounds = renderer.getTextBounds(SMALL_FONT_ID, label);
+  renderer.drawText(SMALL_FONT_ID, centerX - labelBounds.width / 2, valueY + renderer.getLineHeight(UI_12_FONT_ID) + 4, label, true);
+}
+
+void drawCircleOutline(GfxRenderer& renderer, const int centerX, const int centerY, const int radius, const int lineWidth) {
+  const int diameter = radius * 2;
+  renderer.drawRoundedRect(centerX - radius, centerY - radius, diameter, diameter, lineWidth, radius, true);
+}
+
+void drawFilledCircle(GfxRenderer& renderer, const int centerX, const int centerY, const int radius) {
+  for (int dy = -radius; dy <= radius; dy++) {
+    const int span = static_cast<int>(std::sqrt(radius * radius - dy * dy));
+    renderer.drawLine(centerX - span, centerY + dy, centerX + span, centerY + dy, true);
+  }
+}
 
 uint16_t readLE16(HalFile& file) {
   const int c0 = file.read();
@@ -544,6 +572,10 @@ void SleepActivity::onEnter() {
       } else {
         return renderCustomSleepScreen();
       }
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::CLOCK):
+      return renderClockSleepScreen();
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::CALENDAR_STATS):
+      return renderCalendarStatsSleepScreen();
     default:
       return renderDefaultSleepScreen();
   }
@@ -600,6 +632,7 @@ void SleepActivity::renderDefaultSleepScreen() const {
   renderer.drawImage(Logo120, (pageWidth - 120) / 2, (pageHeight - 120) / 2, 120, 120);
   renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 70, tr(STR_CROSSPOINT), true, EpdFontFamily::BOLD);
   renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 95, tr(STR_SLEEPING));
+  renderNewsletterUnreadFooter();
 
   // Make sleep screen dark unless light is selected in settings
   if (SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT) {
@@ -666,7 +699,7 @@ bool SleepActivity::renderSleepOverlayFile(HalFile& file, const char* pathForLog
   if (alphaResult == AlphaOverlayResult::Rendered) return true;
   if (alphaResult == AlphaOverlayResult::Error) return false;
 
-  Bitmap bitmap(file, true);
+  Bitmap bitmap(file);
   const auto parseResult = bitmap.parseHeaders();
   if (parseResult != BmpReaderError::Ok) {
     LOG_ERR("SLP", "Invalid sleep overlay BMP %s: %s", pathForLog, Bitmap::errorToString(parseResult));
@@ -841,4 +874,244 @@ void SleepActivity::renderLastScreenSleepScreen() const {
 void SleepActivity::renderBlankSleepScreen() const {
   renderer.clearScreen();
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+}
+
+void SleepActivity::renderClockUnavailableSleepScreen() const {
+  const auto pageHeight = renderer.getScreenHeight();
+  renderer.clearScreen();
+  renderer.drawCenteredText(UI_12_FONT_ID, pageHeight / 2 - 34, tr(STR_CLOCK), true, EpdFontFamily::BOLD);
+  renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, tr(STR_NOT_SET));
+  renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 28, tr(STR_CLOCK_SYNC_NOW));
+  renderNewsletterUnreadFooter();
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+}
+
+void SleepActivity::renderClockSleepScreen() const {
+  ClockDateTimeCompat now;
+  if (!readClockDateTimeCompat(now, SETTINGS.clockUtcOffsetQ)) {
+    LOG_ERR("SLP", "Clock sleep screen unavailable: RTC date/time not available");
+    renderClockUnavailableSleepScreen();
+    return;
+  }
+
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const int outerMargin = 28;
+  const int contentLeft = outerMargin + 12;
+  const int contentRight = pageWidth - outerMargin - 12;
+  const int contentWidth = contentRight - contentLeft;
+  const int titleY = 44;
+  const int subtitleY = 90;
+  const int headersY = 150;
+  const int gridTop = 188;
+  const int gridBottom = pageHeight - 56;
+  const int gridHeight = gridBottom - gridTop;
+  const int cellWidth = contentWidth / 7;
+  const int cellHeight = gridHeight / 6;
+
+  char titleText[32];
+  snprintf(titleText, sizeof(titleText), "%s %04u", MONTH_NAMES[now.month - 1], now.year);
+
+  char subtitleText[32];
+  snprintf(subtitleText, sizeof(subtitleText), "%s %u", WEEKDAY_NAMES[now.weekday % 7], static_cast<unsigned>(now.day));
+
+  renderer.clearScreen();
+  renderer.drawCenteredText(UI_12_FONT_ID, titleY, titleText, true, EpdFontFamily::BOLD);
+  renderer.drawCenteredText(UI_10_FONT_ID, subtitleY, subtitleText, true);
+  renderer.drawLine(contentLeft + 12, 126, contentRight - 12, 126, true);
+
+  const int monthStartWeekday = (static_cast<int>(now.weekday) - ((static_cast<int>(now.day) - 1) % 7) + 7) % 7;
+  const int startColumn = (monthStartWeekday + 6) % 7;  // Monday-first
+  const int monthDays = clockDateTimeCompat::daysInMonth(now.year, now.month);
+
+  for (int col = 0; col < 7; col++) {
+    const int centerX = contentLeft + col * cellWidth + cellWidth / 2;
+    const int headerWidth = renderer.getTextWidth(SMALL_FONT_ID, CALENDAR_HEADERS[col], EpdFontFamily::BOLD);
+    renderer.drawText(SMALL_FONT_ID, centerX - headerWidth / 2, headersY, CALENDAR_HEADERS[col], true,
+                      EpdFontFamily::BOLD);
+  }
+
+  for (int day = 1; day <= monthDays; day++) {
+    const int offset = startColumn + day - 1;
+    const int row = offset / 7;
+    const int col = offset % 7;
+    if (row >= 6) break;
+
+    const int cellX = contentLeft + col * cellWidth;
+    const int cellY = gridTop + row * cellHeight;
+    const bool isToday = day == now.day;
+    const int centerX = cellX + cellWidth / 2;
+    const int centerY = cellY + cellHeight / 2 + 2;
+
+    char dayText[4];
+    snprintf(dayText, sizeof(dayText), "%d", day);
+    const auto dayStyle = EpdFontFamily::REGULAR;
+    const int textWidth = renderer.getTextWidth(NOTOSERIF_14_FONT_ID, dayText, dayStyle);
+    const int textX = centerX - textWidth / 2;
+    const int textY = centerY - 4;
+
+    if (isToday) {
+      const auto bounds = renderer.getTextBounds(NOTOSERIF_14_FONT_ID, dayText, dayStyle);
+      const int inkCenterX = textX + bounds.left + bounds.width / 2;
+      const int inkCenterY = textY + bounds.top + bounds.height / 2 + 2;
+      drawFilledCircle(renderer, inkCenterX, inkCenterY, 24);
+      renderer.drawText(NOTOSERIF_14_FONT_ID, textX, textY, dayText, false, dayStyle);
+    } else {
+      renderer.drawText(NOTOSERIF_14_FONT_ID, textX, textY, dayText, true, dayStyle);
+    }
+  }
+
+  renderNewsletterUnreadFooter();
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+}
+
+void SleepActivity::renderCalendarStatsSleepScreen() const {
+  ClockDateTimeCompat now;
+  if (!readClockDateTimeCompat(now, SETTINGS.clockUtcOffsetQ)) {
+    LOG_ERR("SLP", "Calendar+stats sleep screen unavailable: RTC date/time not available");
+    renderClockUnavailableSleepScreen();
+    return;
+  }
+
+  const CurrentReadingStatsSummary stats = loadCurrentReadingStatsSummary();
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  int viewTop = 0;
+  int viewRight = 0;
+  int viewBottom = 0;
+  int viewLeft = 0;
+  renderer.getOrientedViewableTRBL(&viewTop, &viewRight, &viewBottom, &viewLeft);
+
+  const int contentLeft = viewLeft + 34;
+  const int contentRight = pageWidth - viewRight - 34;
+  const int contentWidth = contentRight - contentLeft;
+  const int titleY = viewTop + 26;
+  const int subtitleY = titleY + 32;
+  const int dividerY = subtitleY + 30;
+  const int headersY = dividerY + 28;
+  const int gridTop = headersY + 30;
+  const int gridBottom = 396;
+  const int gridHeight = gridBottom - gridTop;
+  const int cellWidth = contentWidth / 7;
+  const int cellHeight = gridHeight / 6;
+  const int statsDividerY = gridBottom + 18;
+  const int statsTop = statsDividerY + 26;
+  const int allBooksLabelY = statsTop + 166;
+  const int allBooksMetricY = allBooksLabelY + 18;
+  const int footerY = pageHeight - viewBottom - 22;
+
+  char titleText[32];
+  snprintf(titleText, sizeof(titleText), "%s %04u", MONTH_NAMES[now.month - 1], now.year);
+
+  char subtitleText[32];
+  snprintf(subtitleText, sizeof(subtitleText), "%s %u", WEEKDAY_NAMES[now.weekday % 7], static_cast<unsigned>(now.day));
+
+  renderer.clearScreen();
+  renderer.drawCenteredText(UI_12_FONT_ID, titleY, titleText, true, EpdFontFamily::BOLD);
+  renderer.drawCenteredText(UI_10_FONT_ID, subtitleY, subtitleText, true);
+  renderer.drawLine(contentLeft + 12, dividerY, contentRight - 12, dividerY, true);
+
+  const int monthStartWeekday = (static_cast<int>(now.weekday) - ((static_cast<int>(now.day) - 1) % 7) + 7) % 7;
+  const int startColumn = (monthStartWeekday + 6) % 7;
+  const int monthDays = clockDateTimeCompat::daysInMonth(now.year, now.month);
+
+  for (int col = 0; col < 7; col++) {
+    const int centerX = contentLeft + col * cellWidth + cellWidth / 2;
+    const int headerWidth = renderer.getTextWidth(SMALL_FONT_ID, CALENDAR_HEADERS[col], EpdFontFamily::BOLD);
+    renderer.drawText(SMALL_FONT_ID, centerX - headerWidth / 2, headersY, CALENDAR_HEADERS[col], true,
+                      EpdFontFamily::BOLD);
+  }
+
+  for (int day = 1; day <= monthDays; day++) {
+    const int offset = startColumn + day - 1;
+    const int row = offset / 7;
+    const int col = offset % 7;
+    if (row >= 6) break;
+
+    const int cellX = contentLeft + col * cellWidth;
+    const int cellY = gridTop + row * cellHeight;
+    const bool isToday = day == now.day;
+    const int centerX = cellX + cellWidth / 2;
+    const int centerY = cellY + cellHeight / 2 + 2;
+
+    char dayText[4];
+    snprintf(dayText, sizeof(dayText), "%d", day);
+    const auto dayStyle = EpdFontFamily::REGULAR;
+    const int textWidth = renderer.getTextWidth(NOTOSERIF_14_FONT_ID, dayText, dayStyle);
+    const int textX = centerX - textWidth / 2;
+    const int textY = centerY - 4;
+
+    if (isToday) {
+      const auto bounds = renderer.getTextBounds(NOTOSERIF_14_FONT_ID, dayText, dayStyle);
+      const int inkCenterX = textX + bounds.left + bounds.width / 2;
+      const int inkCenterY = textY + bounds.top + bounds.height / 2 + 2;
+      drawFilledCircle(renderer, inkCenterX, inkCenterY, 20);
+      renderer.drawText(NOTOSERIF_14_FONT_ID, textX, textY, dayText, false, dayStyle);
+    } else {
+      renderer.drawText(NOTOSERIF_14_FONT_ID, textX, textY, dayText, true, dayStyle);
+    }
+  }
+
+  renderer.drawLine(contentLeft + 8, statsDividerY, contentRight - 8, statsDividerY, true);
+
+  if (stats.hasBookContext) {
+    renderer.drawCenteredText(SMALL_FONT_ID, statsTop, tr(STR_STATS_THIS_BOOK), true, EpdFontFamily::BOLD);
+
+    const auto titleLines =
+        renderer.wrappedText(UI_10_FONT_ID, stats.currentBookTitle.c_str(), contentWidth - 40, 2, EpdFontFamily::BOLD);
+    int textY = statsTop + 20;
+    for (const auto& line : titleLines) {
+      renderer.drawCenteredText(UI_10_FONT_ID, textY, line.c_str(), true, EpdFontFamily::BOLD);
+      textY += renderer.getLineHeight(UI_10_FONT_ID);
+    }
+
+    if (!stats.currentBookAuthor.empty()) {
+      const std::string authorLine = renderer.truncatedText(SMALL_FONT_ID, stats.currentBookAuthor.c_str(), contentWidth - 60);
+      renderer.drawCenteredText(SMALL_FONT_ID, textY + 2, authorLine.c_str(), true);
+      textY += renderer.getLineHeight(SMALL_FONT_ID) + 6;
+    } else {
+      textY += 6;
+    }
+
+    char currentTimeBuf[24];
+    char currentPagesBuf[16];
+    char currentSessionsBuf[16];
+    BookReadingStats::formatDuration(stats.currentBookStats.totalReadingSeconds, currentTimeBuf, sizeof(currentTimeBuf));
+    snprintf(currentPagesBuf, sizeof(currentPagesBuf), "%lu",
+             static_cast<unsigned long>(stats.currentBookStats.totalPagesTurned));
+    snprintf(currentSessionsBuf, sizeof(currentSessionsBuf), "%lu",
+             static_cast<unsigned long>(stats.currentBookStats.sessionCount));
+
+    const int metricRowY = textY;
+    drawSleepMetric(renderer, contentLeft + contentWidth / 6, metricRowY, currentSessionsBuf, tr(STR_STATS_SESSIONS_LBL));
+    drawSleepMetric(renderer, contentLeft + contentWidth / 2, metricRowY, currentTimeBuf, tr(STR_STATS_TIME_LBL));
+    drawSleepMetric(renderer, contentLeft + (contentWidth * 5) / 6, metricRowY, currentPagesBuf, tr(STR_STATS_PAGES_LBL));
+  } else {
+    renderer.drawCenteredText(UI_10_FONT_ID, statsTop + 24, tr(STR_NO_OPEN_BOOK), true, EpdFontFamily::BOLD);
+  }
+
+  char totalTimeBuf[24];
+  char totalPagesBuf[16];
+  char totalSessionsBuf[16];
+  BookReadingStats::formatDuration(stats.globalStats.totalReadingSeconds, totalTimeBuf, sizeof(totalTimeBuf));
+  snprintf(totalPagesBuf, sizeof(totalPagesBuf), "%lu", static_cast<unsigned long>(stats.globalStats.totalPagesTurned));
+  snprintf(totalSessionsBuf, sizeof(totalSessionsBuf), "%lu", static_cast<unsigned long>(stats.globalStats.totalSessions));
+
+  renderer.drawCenteredText(SMALL_FONT_ID, allBooksLabelY, tr(STR_STATS_ALL_TIME), true, EpdFontFamily::BOLD);
+  drawSleepMetric(renderer, contentLeft + contentWidth / 6, allBooksMetricY, totalSessionsBuf, tr(STR_STATS_SESSIONS_LBL));
+  drawSleepMetric(renderer, contentLeft + contentWidth / 2, allBooksMetricY, totalTimeBuf, tr(STR_STATS_TIME_LBL));
+  drawSleepMetric(renderer, contentLeft + (contentWidth * 5) / 6, allBooksMetricY, totalPagesBuf, tr(STR_STATS_PAGES_LBL));
+
+  renderNewsletterUnreadFooter(footerY);
+
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+}
+
+void SleepActivity::renderNewsletterUnreadFooter(const int y) const {
+  const int unread = NEWSLETTER_STORE.unreadCount();
+  if (unread <= 0) return;
+  char unreadBuf[32];
+  snprintf(unreadBuf, sizeof(unreadBuf), tr(STR_NEWSLETTER_UNREAD_COUNT), static_cast<unsigned>(unread));
+  const int footerY = y >= 0 ? y : renderer.getScreenHeight() - 24;
+  renderer.drawCenteredText(SMALL_FONT_ID, footerY, unreadBuf, true);
 }

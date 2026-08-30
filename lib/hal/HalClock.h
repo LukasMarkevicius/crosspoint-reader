@@ -7,6 +7,18 @@ class HalClock;
 extern HalClock halClock;  // Singleton
 
 class HalClock {
+ public:
+  struct DateTime {
+    uint16_t year = 0;
+    uint8_t month = 0;
+    uint8_t day = 0;
+    uint8_t weekday = 0;  // 0 = Sunday
+    uint8_t hour = 0;
+    uint8_t minute = 0;
+    uint8_t second = 0;
+  };
+
+ private:
   bool _available = false;
   mutable Rtc _sdkRtc;
   mutable uint8_t _cachedHour = 0;
@@ -26,6 +38,10 @@ class HalClock {
   // Get current hour (0-23) and minute (0-59).
   // Returns false if RTC is not available.
   bool getTime(uint8_t& hour, uint8_t& minute) const;
+
+  // Read the current RTC date and time, adjusted by the configured UTC offset.
+  // Returns false if RTC is not available or cannot be read.
+  bool getDateTime(DateTime& out, uint8_t utcOffsetQuarterHoursBiased = 48) const;
 
   // Format time into a caller-provided buffer.
   // 24h mode produces "HH:MM" (needs >=6 bytes); 12h mode produces "H:MM AM"/"HH:MM PM" (needs >=9 bytes).

@@ -68,6 +68,7 @@ Never invoke or probe `clang-format` directly. The repository wrapper is the onl
 7. `std::vector` Pre-allocation: Always call `.reserve(N)` before any `push_back()` loop. Each growth event allocates a new block (2×), copies all elements, then frees the old one — three heap operations that fragment DRAM. When the final size is unknown, estimate conservatively.
 8. SD Persistence Throttling: Settings, state, credentials, and other `PersistableStore` JSON files live on SD under `/.crosspoint/` through `HalStorage`; SPIFFS is not mounted. Guard redundant writes and debounce progress saves to avoid serialization, SD I/O, and `storageMutex` cost.
 9. `new` is not nothrow on ESP32: With `-fno-exceptions`, bare `new` that fails calls `abort()` — it does NOT return `nullptr`. Always use `new (std::nothrow)` and null-check the result, or use `makeUniqueNoThrow<T>()` from `lib/Memory/Memory.h`. Never write bare `new` for any fallible allocation.
+10. Large feed imports: For RSS/newsletter-style first syncs, do not parse and retain an unbounded history in one pass. Reserve the target vector up front, cap the number of items scanned/imported to the retained window plus a small headroom, and sort/prune once at the end instead of after every item.
 
 ---
 
@@ -451,6 +452,9 @@ Constraint: Physical button positions are fixed on hardware, but their logical f
 
 * Rule: All UI rendering must go through the GUI macro (UITheme). 
 * Do not hardcode fonts, colors, or positioning. This ensures orientation-aware layout consistency.
+* Sleep-screen exception: custom full-screen sleep layouts may position content directly, but any highlight behind text must be derived from the same `drawText()` anchor used by the normal glyphs. For calendar screens, place the day number first, then center the badge from `GfxRenderer::getTextBounds()` over that exact ink box. Do not tune the selected day with a separate visual offset path.
+* Activity-result exception: do not kick off blocking network or SD work directly inside a `startActivityForResult()` callback. Set state, request a repaint, and defer the heavy work to the next normal `loop()` tick; starting TLS/sync while the child activity is still unwinding can crash the device.
+* Preview exception: the PlatformIO simulator is the supported preview path for UI work. Avoid maintaining separate visual-only preview tools that can drift from firmware rendering and input behavior.
 
 ---
 
@@ -817,9 +821,7 @@ Tested in all 4 orientations with 5MB+ files.
 **To add/modify translations (i18n)**:
 
 1. Edit or add YAML file: `lib/I18n/translations/<language>.yaml`
-   
-   - Each file must contain: `_language_name`, `_language_code`, `_order`, and `STR_*` keys
-   
+   - Each file must contain: `_language_name`, `_language_code`, `_order`, `_bcp47`, and `STR_*` keys
    - English (`english.yaml`) is the reference; missing keys in other languages fall back to English
 2. Run generator: `python scripts/gen_i18n.py lib/I18n/translations lib/I18n/`
 3. Generated files update: `I18nKeys.h`, `I18nStrings.h`, `I18nStrings.cpp`

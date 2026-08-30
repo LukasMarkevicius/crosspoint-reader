@@ -16,6 +16,7 @@
 #include "KOReaderSettingsActivity.h"
 #include "LanguageSelectActivity.h"
 #include "MappedInputManager.h"
+#include "activities/newsletters/NewsletterSettingsActivity.h"
 #include "OpdsServerListActivity.h"
 #include "OtaUpdateActivity.h"
 #include "SdCardFontSystem.h"
@@ -57,8 +58,9 @@ void SettingsActivity::rebuildSettingsLists() {
     if (setting.category == StrId::STR_NONE_OPT) continue;
     if (setting.category == StrId::STR_CAT_DISPLAY) {
       // The sunlight fading fix is a grayscale-waveform compensation that does
-      // not apply on the X4 Pro (plain OTP waveform, no custom grayscale LUT).
-      if (setting.valuePtr == &CrossPointSettings::fadingFix && BoardConfig::isX4Pro()) {
+      // not apply on the X4 Pro / X4 Classic (plain OTP waveform, same panels).
+      if (setting.valuePtr == &CrossPointSettings::fadingFix &&
+          (BoardConfig::isX4Pro() || BoardConfig::isX4Classic())) {
         continue;
       }
       displaySettings.push_back(setting);
@@ -85,6 +87,7 @@ void SettingsActivity::rebuildSettingsLists() {
   }
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_NEWSLETTER_SETTINGS, SettingAction::NewsletterSettings));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
   // OTA fetches this board's own release asset (see OtaUpdater); boards whose
@@ -185,6 +188,13 @@ void SettingsActivity::activateIndex(const int index) {
   // a lingering tap flash would gray an unrelated element.
   app.clearTapFlash();
   toggleCurrentSetting();
+  // Tap-first: a tapped row is not a cursor position. Leaving it focused
+  // (inverted) after the tap meant the row stayed black once its sub-screen or
+  // popup closed, and Back then had to clear that focus before a second Back
+  // left Settings. Hand the focus back to the tab band; the viewport stays put.
+  if (mappedInput.hasTouch()) {
+    activeNav().selected = 0;
+  }
 }
 
 void SettingsActivity::onExit() {
@@ -322,6 +332,9 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       case SettingAction::KOReaderSync:
         startActivityForResult(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::NewsletterSettings:
+        startActivityForResult(std::make_unique<NewsletterSettingsActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::OPDSBrowser:
         startActivityForResult(std::make_unique<OpdsServerListActivity>(renderer, mappedInput), resultHandler);

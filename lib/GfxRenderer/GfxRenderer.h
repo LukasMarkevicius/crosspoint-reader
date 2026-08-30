@@ -28,6 +28,14 @@ enum Color : uint8_t { Clear = 0x00, White = 0x01, LightGray = 0x05, DarkGray = 
 
 class GfxRenderer {
  public:
+  struct TextBounds {
+    int left = 0;
+    int top = 0;
+    int width = 0;
+    int height = 0;
+    bool hasInk = false;
+  };
+
   enum RenderMode { BW, GRAYSCALE_LSB, GRAYSCALE_MSB };
 
   // Logical screen orientation from the perspective of callers
@@ -63,6 +71,13 @@ class GfxRenderer {
   // recording to the (non-const) FontCacheManager. Same pragmatic compromise
   // as before, concentrated in a single pointer instead of four fields.
   mutable FontCacheManager* fontCacheManager_ = nullptr;
+
+  // One-shot refresh promotion (see promoteNextRefresh). Mutable because
+  // displayBuffer() is const but must consume the flag.
+  mutable bool promotedRefreshPending_ = false;
+  mutable HalDisplay::RefreshMode promotedRefresh_ = HalDisplay::FAST_REFRESH;
+  // Swap in (and clear) the promoted mode, if one is pending.
+  HalDisplay::RefreshMode applyPromotedRefresh(HalDisplay::RefreshMode refreshMode) const;
 
   // Tiled grayscale strip target. When active, drawPixel()/clearScreen()
   // operate on a caller-owned scratch holding one horizontal band of physical
@@ -187,6 +202,15 @@ class GfxRenderer {
   int getScreenHeight() const;
   void tapToLogical(float nx, float ny, int& outX, int& outY) const;
   void displayBuffer(HalDisplay::RefreshMode refreshMode = HalDisplay::FAST_REFRESH) const;
+  // One-shot: the next displayBuffer()/displayBufferAsync() call uses `mode`
+  // instead of what its caller asked for, then the override clears itself.
+  // Lets a closing overlay (the control center's refresh tile) hand a
+  // ghost-cleanup waveform to the repaint of whatever screen is underneath,
+  // which it cannot reach directly.
+  void promoteNextRefresh(const HalDisplay::RefreshMode mode) const {
+    promotedRefreshPending_ = true;
+    promotedRefresh_ = mode;
+  }
   // Non-blocking refresh: starts the waveform and returns so CPU work (e.g.
   // grayscale strip rendering) can overlap the panel's refresh time. The
   // framebuffer must stay untouched until waitRefreshComplete(). Falls back to
@@ -281,6 +305,8 @@ class GfxRenderer {
   /// Returns the kerning adjustment between two adjacent codepoints.
   int getKerning(int fontId, uint32_t leftCp, uint32_t rightCp, EpdFontFamily::Style style) const;
   int getTextAdvanceX(int fontId, const char* text, EpdFontFamily::Style style) const;
+  TextBounds getTextBounds(int fontId, const char* text, EpdFontFamily::Style style = EpdFontFamily::REGULAR,
+                           BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO) const;
   int getFontAscenderSize(int fontId) const;
   int getLineHeight(int fontId) const;
   int getLineHeight(int fontId, float compression) const;
@@ -322,8 +348,17 @@ class GfxRenderer {
   // Paper Mono: the base activation is deferred so base + gray planes go out
   // as one waveform. Route the base through displayGrayscaleBase() when true.
   bool combinesGrayscaleBase() const;
-  bool storeBwBuffer();    // Returns true if buffer was stored successfully
-  void restoreBwBuffer();  // Restore and free the stored buffer
+  bool storeBwBuffer();  // Returns true if buffer was stored successfully
+  // Restore and free the stored buffer. resyncPanelBaseline rewrites the
+  // controller's differential baseline to the restored frame — correct after
+  // a grayscale render (the glass matches the stored BW plane), WRONG when
+  // the glass shows content painted after the store (overlay chrome): the
+  // next differential would treat that content as already erased and leave
+  // it on the glass. Such callers pass false so the baseline keeps tracking
+  // what was last pushed.
+  void restoreBwBuffer(bool resyncPanelBaseline = true);
+  // Free a stored buffer without restoring it (the page under it changed).
+  void discardStoredBwBuffer() { freeBwBufferChunks(); }
   void cleanupGrayscaleWithFrameBuffer() const;
 
   // Font helpers

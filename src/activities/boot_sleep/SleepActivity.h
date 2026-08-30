@@ -23,6 +23,10 @@ class SleepActivity final : public Activity {
   void renderLastScreenSleepScreen() const;
   void renderTransparentCustomSleepScreen() const;
   void renderBlankSleepScreen() const;
+  void renderClockSleepScreen() const;
+  void renderCalendarStatsSleepScreen() const;
+  void renderClockUnavailableSleepScreen() const;
+  void renderNewsletterUnreadFooter(int y = -1) const;
 
   bool fromTimeout = false;
 };

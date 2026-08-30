@@ -7,6 +7,58 @@
 
 HalClock halClock;  // Singleton instance
 
+namespace {
+
+bool isLeapYear(const uint16_t year) {
+  if ((year % 4) != 0) return false;
+  if ((year % 100) != 0) return true;
+  return (year % 400) == 0;
+}
+
+uint8_t daysInMonth(const uint16_t year, const uint8_t month) {
+  static constexpr uint8_t DAYS[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (month < 1 || month > 12) return 31;
+  if (month == 2 && isLeapYear(year)) return 29;
+  return DAYS[month - 1];
+}
+
+void shiftDateByDays(HalClock::DateTime& dt, int dayDelta) {
+  while (dayDelta > 0) {
+    const uint8_t dim = daysInMonth(dt.year, dt.month);
+    if (dt.day < dim) {
+      dt.day++;
+    } else {
+      dt.day = 1;
+      if (dt.month < 12) {
+        dt.month++;
+      } else {
+        dt.month = 1;
+        dt.year++;
+      }
+    }
+    dt.weekday = static_cast<uint8_t>((dt.weekday + 1) % 7);
+    dayDelta--;
+  }
+
+  while (dayDelta < 0) {
+    if (dt.day > 1) {
+      dt.day--;
+    } else {
+      if (dt.month > 1) {
+        dt.month--;
+      } else {
+        dt.month = 12;
+        if (dt.year > 0) dt.year--;
+      }
+      dt.day = daysInMonth(dt.year, dt.month);
+    }
+    dt.weekday = static_cast<uint8_t>((dt.weekday + 6) % 7);
+    dayDelta++;
+  }
+}
+
+}  // namespace
+
 void HalClock::begin() {
   _available = _sdkRtc.begin();
   LOG_INF("CLK", _available ? "SDK RTC found" : "RTC not found");
@@ -39,22 +91,47 @@ bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
   return true;
 }
 
+bool HalClock::getDateTime(DateTime& out, uint8_t utcOffsetQuarterHoursBiased) const {
+  if (!_available) return false;
+
+  Rtc::DateTime dt;
+  if (!_sdkRtc.now(dt)) return false;
+
+  out.year = dt.year;
+  out.month = dt.month;
+  out.day = dt.day;
+  out.weekday = dt.weekday % 7;
+  out.hour = dt.hour;
+  out.minute = dt.minute;
+  out.second = dt.second;
+
+  if (utcOffsetQuarterHoursBiased > 104) utcOffsetQuarterHoursBiased = 104;
+  int totalMinutes = static_cast<int>(out.hour) * 60 + static_cast<int>(out.minute) +
+                     (static_cast<int>(utcOffsetQuarterHoursBiased) - 48) * 15;
+
+  int dayDelta = 0;
+  while (totalMinutes < 0) {
+    totalMinutes += 1440;
+    dayDelta--;
+  }
+  while (totalMinutes >= 1440) {
+    totalMinutes -= 1440;
+    dayDelta++;
+  }
+
+  out.hour = static_cast<uint8_t>(totalMinutes / 60);
+  out.minute = static_cast<uint8_t>(totalMinutes % 60);
+  shiftDateByDays(out, dayDelta);
+  return true;
+}
+
 bool HalClock::formatTime(char* buf, size_t bufSize, uint8_t utcOffsetQuarterHoursBiased, bool use12Hour) const {
   if (bufSize < (use12Hour ? 9u : 6u)) return false;
-  uint8_t h, m;
-  if (!getTime(h, m)) return false;
+  DateTime dt;
+  if (!getDateTime(dt, utcOffsetQuarterHoursBiased)) return false;
 
-  // Apply UTC offset: convert biased value to signed quarter-hours.
-  // Clamp against corrupted persisted values so display time can't drift outside [-12:00, +14:00].
-  if (utcOffsetQuarterHoursBiased > 104) utcOffsetQuarterHoursBiased = 104;
-  int offsetQuarterHours = static_cast<int>(utcOffsetQuarterHoursBiased) - 48;
-  int totalMinutes = static_cast<int>(h) * 60 + static_cast<int>(m) + offsetQuarterHours * 15;
-
-  // Wrap around 24 hours
-  totalMinutes = ((totalMinutes % 1440) + 1440) % 1440;
-
-  const int hour24 = totalMinutes / 60;
-  const int min = totalMinutes % 60;
+  const int hour24 = dt.hour;
+  const int min = dt.minute;
   if (use12Hour) {
     const bool pm = hour24 >= 12;
     int hour12 = hour24 % 12;
