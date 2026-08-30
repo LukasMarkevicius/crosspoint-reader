@@ -22,15 +22,83 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
+namespace {
+constexpr size_t HOME_BASE_MENU_ITEM_COUNT = 6;
+}
+
 int HomeActivity::getMenuItemCount() const {
-  int count = 4;  // File Browser, Recents, File transfer, Settings
+  int count = static_cast<int>(HOME_BASE_MENU_ITEM_COUNT);
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
-  if (hasOpdsServers) {
-    count++;
-  }
+  if (hasOpdsServers) count++;
   return count;
+}
+
+void HomeActivity::rebuildVisibleMenuItems() {
+  visibleMenuItems.clear();
+  visibleMenuItems.reserve(HOME_BASE_MENU_ITEM_COUNT + (hasOpdsServers ? 1 : 0));
+  visibleMenuItems.push_back(HomeMenuItem::FILE_BROWSER);
+  visibleMenuItems.push_back(HomeMenuItem::RECENTS);
+  if (hasOpdsServers) {
+    visibleMenuItems.push_back(HomeMenuItem::OPDS_BROWSER);
+  }
+  visibleMenuItems.push_back(HomeMenuItem::READING_STATS);
+  visibleMenuItems.push_back(HomeMenuItem::NEWSLETTERS);
+  visibleMenuItems.push_back(HomeMenuItem::FILE_TRANSFER);
+  visibleMenuItems.push_back(HomeMenuItem::SETTINGS_MENU);
+}
+
+int HomeActivity::menuItemToIndex(const HomeMenuItem item) const {
+  const auto it = std::find(visibleMenuItems.begin(), visibleMenuItems.end(), item);
+  return it == visibleMenuItems.end() ? 0 : static_cast<int>(std::distance(visibleMenuItems.begin(), it));
+}
+
+HomeMenuItem HomeActivity::indexToMenuItem(const int idx) const {
+  if (idx < 0 || idx >= static_cast<int>(visibleMenuItems.size())) return HomeMenuItem::NONE;
+  return visibleMenuItems[idx];
+}
+
+const char* HomeActivity::labelForMenuItem(const HomeMenuItem item) const {
+  switch (item) {
+    case HomeMenuItem::FILE_BROWSER:
+      return tr(STR_BROWSE_FILES);
+    case HomeMenuItem::RECENTS:
+      return tr(STR_MENU_RECENT_BOOKS);
+    case HomeMenuItem::READING_STATS:
+      return tr(STR_READING_STATS);
+    case HomeMenuItem::NEWSLETTERS:
+      return tr(STR_NEWSLETTERS);
+    case HomeMenuItem::OPDS_BROWSER:
+      return tr(STR_OPDS_BROWSER);
+    case HomeMenuItem::FILE_TRANSFER:
+      return tr(STR_FILE_TRANSFER);
+    case HomeMenuItem::SETTINGS_MENU:
+      return tr(STR_SETTINGS_TITLE);
+    default:
+      return "";
+  }
+}
+
+UIIcon HomeActivity::iconForMenuItem(const HomeMenuItem item) const {
+  switch (item) {
+    case HomeMenuItem::FILE_BROWSER:
+      return Folder;
+    case HomeMenuItem::RECENTS:
+      return Recent;
+    case HomeMenuItem::READING_STATS:
+      return Book;
+    case HomeMenuItem::NEWSLETTERS:
+      return Library;
+    case HomeMenuItem::OPDS_BROWSER:
+      return Library;
+    case HomeMenuItem::FILE_TRANSFER:
+      return Transfer;
+    case HomeMenuItem::SETTINGS_MENU:
+      return Settings;
+    default:
+      return None;
+  }
 }
 
 void HomeActivity::loadRecentBooks(int maxBooks) {
@@ -114,12 +182,13 @@ void HomeActivity::onEnter() {
   Activity::onEnter();
 
   hasOpdsServers = OPDS_STORE.hasServers();
+  rebuildVisibleMenuItems();
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   loadRecentBooks(metrics.homeRecentBooksCount);
 
   const auto base = static_cast<int>(recentBooks.size());
-  selectorIndex = initialMenuItem == HomeMenuItem::NONE ? 0 : base + menuItemToIndex(initialMenuItem, hasOpdsServers);
+  selectorIndex = initialMenuItem == HomeMenuItem::NONE ? 0 : base + menuItemToIndex(initialMenuItem);
 
   // Trigger first update
   requestUpdate();
@@ -178,12 +247,18 @@ void HomeActivity::loop() {
       return;
     }
     const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
-    switch (indexToMenuItem(menuIndex, hasOpdsServers)) {
+    switch (indexToMenuItem(menuIndex)) {
       case HomeMenuItem::FILE_BROWSER:
         onFileBrowserOpen();
         break;
       case HomeMenuItem::RECENTS:
         onRecentsOpen();
+        break;
+      case HomeMenuItem::READING_STATS:
+        onReadingStatsOpen();
+        break;
+      case HomeMenuItem::NEWSLETTERS:
+        onNewslettersOpen();
         break;
       case HomeMenuItem::OPDS_BROWSER:
         onOpdsBrowserOpen();
@@ -238,7 +313,9 @@ void HomeActivity::loop() {
                                                metrics.homeTopPadding + metrics.homeCoverTileHeight, coverColumnWidth);
   if (coverTouch != MappedInputManager::RowTouch::None) {
     if (coverTouch == MappedInputManager::RowTouch::Down) {
-      if (selectorIndex != touchedBook) {
+      if (selectorIndex == touchedBook) {
+        activateSelection();
+      } else {
         selectorIndex = touchedBook;
         requestUpdate();
       }
@@ -264,7 +341,9 @@ void HomeActivity::loop() {
     const int touchedIndex =
         metrics.homeContinueReadingInMenu ? menuRow : menuRow + static_cast<int>(recentBooks.size());
     if (menuTouch == MappedInputManager::RowTouch::Down) {
-      if (selectorIndex != touchedIndex) {
+      if (selectorIndex == touchedIndex) {
+        activateSelection();
+      } else {
         selectorIndex = touchedIndex;
         requestUpdate();
       }
@@ -306,20 +385,8 @@ void HomeActivity::render(RenderLock&&) {
                           recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
                           std::bind(&HomeActivity::storeCoverBuffer, this));
 
-  // Build menu items dynamically
-  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
-                                        tr(STR_SETTINGS_TITLE)};
-  std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, Settings};
-
-  if (hasOpdsServers) {
-    menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
-    menuIcons.insert(menuIcons.begin() + 2, Library);
-  }
-
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     // Insert Continue Reading at the top if enabled in theme
-    menuItems.insert(menuItems.begin(), tr(STR_CONTINUE_READING));
-    menuIcons.insert(menuIcons.begin(), Book);
   }
 
   GUI.drawButtonMenu(
@@ -327,10 +394,18 @@ void HomeActivity::render(RenderLock&&) {
       Rect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset, pageWidth,
            pageHeight - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing +
                          metrics.homeMenuTopOffset + metrics.buttonHintsHeight)},
-      static_cast<int>(menuItems.size()),
+      static_cast<int>(visibleMenuItems.size()) + (metrics.homeContinueReadingInMenu && !recentBooks.empty() ? 1 : 0),
       metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size(),
-      [&menuItems](int index) { return std::string(menuItems[index]); },
-      [&menuIcons](int index) { return menuIcons[index]; });
+      [this, &metrics](int index) {
+        if (metrics.homeContinueReadingInMenu && !recentBooks.empty() && index == 0) return std::string(tr(STR_CONTINUE_READING));
+        const int menuIndex = index - (metrics.homeContinueReadingInMenu && !recentBooks.empty() ? 1 : 0);
+        return std::string(labelForMenuItem(visibleMenuItems[menuIndex]));
+      },
+      [this, &metrics](int index) {
+        if (metrics.homeContinueReadingInMenu && !recentBooks.empty() && index == 0) return Book;
+        const int menuIndex = index - (metrics.homeContinueReadingInMenu && !recentBooks.empty() ? 1 : 0);
+        return iconForMenuItem(visibleMenuItems[menuIndex]);
+      });
 
   const auto labels = mappedInput.mapLabels(recentBooks.empty() ? "" : tr(STR_RESUME), tr(STR_SELECT), tr(STR_DIR_UP),
                                             tr(STR_DIR_DOWN));
@@ -353,8 +428,12 @@ void HomeActivity::onFileBrowserOpen() { activityManager.goToFileBrowser(); }
 
 void HomeActivity::onRecentsOpen() { activityManager.goToRecentBooks(); }
 
+void HomeActivity::onReadingStatsOpen() { activityManager.goToReadingStats(); }
+
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 
 void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 
 void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
+
+void HomeActivity::onNewslettersOpen() { activityManager.goToNewsletters(); }

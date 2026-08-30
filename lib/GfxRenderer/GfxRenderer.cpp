@@ -2088,6 +2088,87 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
   return widthPx;
 }
 
+GfxRenderer::TextBounds GfxRenderer::getTextBounds(const int fontId, const char* text, const EpdFontFamily::Style style,
+                                                   const BidiUtils::BidiBaseDir baseDir) const {
+  TextBounds bounds;
+  if (text == nullptr || *text == '\0') {
+    return bounds;
+  }
+
+  const int resolvedFontId = resolveTextFontId(fontId, text, style);
+  std::string visual;
+  const char* renderedText = resolveVisualText(text, visual, baseDir);
+
+  const auto fontIt = fontMap.find(resolvedFontId);
+  if (fontIt == fontMap.end()) {
+    LOG_ERR("GFX", "Font %d not found", resolvedFontId);
+    return bounds;
+  }
+
+  const auto& font = fontIt->second;
+  const int baselineY = getFontAscenderSize(resolvedFontId);
+  int cursorX = 0;
+  int32_t prevAdvanceFP = 0;
+  uint32_t prevCp = 0;
+  uint32_t cp;
+
+  int minX = 0;
+  int minY = 0;
+  int maxX = 0;
+  int maxY = 0;
+
+  while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&renderedText)))) {
+    if (BidiUtils::isTransparentMark(cp) || utf8IsCombiningMark(cp)) {
+      continue;
+    }
+
+    cp = font.applyLigatures(cp, renderedText, style);
+    if (prevCp != 0) {
+      const auto kernFP = font.getKerning(prevCp, cp, style);
+      cursorX += fp4::toPixel(prevAdvanceFP + kernFP);
+    }
+
+    const EpdGlyph* glyph = font.getGlyph(cp, style);
+    prevAdvanceFP = glyph ? glyph->advanceX : 0;
+    if ((style & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0) {
+      prevAdvanceFP = (prevAdvanceFP + 1) / 2;
+    }
+    prevCp = cp;
+
+    if (!glyph || glyph->width == 0 || glyph->height == 0) {
+      continue;
+    }
+
+    const int glyphX0 = cursorX + glyph->left;
+    const int glyphY0 = baselineY - glyph->top;
+    const int glyphX1 = glyphX0 + glyph->width;
+    const int glyphY1 = glyphY0 + glyph->height;
+
+    if (!bounds.hasInk) {
+      minX = glyphX0;
+      minY = glyphY0;
+      maxX = glyphX1;
+      maxY = glyphY1;
+      bounds.hasInk = true;
+    } else {
+      minX = std::min(minX, glyphX0);
+      minY = std::min(minY, glyphY0);
+      maxX = std::max(maxX, glyphX1);
+      maxY = std::max(maxY, glyphY1);
+    }
+  }
+
+  if (!bounds.hasInk) {
+    return bounds;
+  }
+
+  bounds.left = minX;
+  bounds.top = minY;
+  bounds.width = maxX - minX;
+  bounds.height = maxY - minY;
+  return bounds;
+}
+
 int GfxRenderer::getFontAscenderSize(const int fontId) const {
   const auto fontIt = fontMap.find(fontId);
   if (fontIt == fontMap.end()) {
