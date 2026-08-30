@@ -17,6 +17,7 @@
 #include "components/UiAppHelpers.h"
 #include "newsletters/NewsletterConfigStore.h"
 #include "newsletters/NewsletterSyncClient.h"
+#include "util/ClockDateTimeCompat.h"
 
 namespace fui = freeink::ui;
 
@@ -183,8 +184,8 @@ void NewsletterListActivity::openEntry(const std::string& guid) {
 
 bool NewsletterListActivity::shouldAutoSyncOnOpen() const {
   if (!NEWSLETTER_CONFIG.autoSyncEnabled || !NEWSLETTER_CONFIG.isConfigured()) return false;
-  HalClock::DateTime now;
-  if (!halClock.getDateTime(now, SETTINGS.clockUtcOffsetQ)) return false;
+  ClockDateTimeCompat now;
+  if (!readClockDateTimeCompat(now, SETTINGS.clockUtcOffsetQ)) return false;
   const int32_t todayKey = now.year * 10000 + static_cast<int32_t>(now.month) * 100 + now.day;
   if (NEWSLETTER_STORE.getLastSuccessfulSyncDateKey() >= todayKey) return false;
   return now.hour >= NEWSLETTER_CONFIG.syncHour();

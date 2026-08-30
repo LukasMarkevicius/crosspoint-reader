@@ -43,6 +43,7 @@ class TxtReaderActivity final : public ReaderActivity {
 
   bool loadBook() override;
   std::string getBookTitle() const override { return txt ? txt->getTitle() : ""; }
+  std::string getBookCachePath() const override { return txt ? txt->getCachePath() : ""; }
   void renderBook() override;
 
  public:

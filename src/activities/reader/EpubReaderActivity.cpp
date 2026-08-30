@@ -31,6 +31,7 @@
 #include "MappedInputManager.h"
 #include "ProgressMapper.h"
 #include "QrDisplayActivity.h"
+#include "ReadingStatsActivity.h"
 #include "ReaderActivity.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
@@ -388,7 +389,9 @@ void EpubReaderActivity::loop() {
     }
 
     if ((millis() - lastPageTurnTime) >= pageTurnDuration) {
-      pageTurn(true);
+      if (pageTurn(true)) {
+        noteReadingStatsInteraction(1);
+      }
       requestUpdate();
       return;
     }
@@ -515,7 +518,9 @@ void EpubReaderActivity::loop() {
     }
     const bool forward = pendingManualTurn > 0;
     pendingManualTurn = 0;
-    pageTurn(forward);
+    if (pageTurn(forward)) {
+      noteReadingStatsInteraction(1);
+    }
     requestUpdate();
     return;
   }
@@ -540,7 +545,9 @@ void EpubReaderActivity::loop() {
   }
 
   if (longPress && SETTINGS.longPressButtonBehavior == SETTINGS.CHAPTER_SKIP) {
-    skipPages(nextTriggered ? 1 : -1);
+    if (skipPages(nextTriggered ? 1 : -1)) {
+      noteReadingStatsInteraction(10);
+    }
     requestUpdate();
     return;
   }
@@ -565,9 +572,13 @@ void EpubReaderActivity::loop() {
   }
 
   if (prevTriggered) {
-    pageTurn(false);
+    if (pageTurn(false)) {
+      noteReadingStatsInteraction(1);
+    }
   } else {
-    pageTurn(true);
+    if (pageTurn(true)) {
+      noteReadingStatsInteraction(1);
+    }
   }
   requestUpdate();
 }
@@ -762,6 +773,28 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
               jumpToPercent(std::get<PercentResult>(result.data).percent);
             }
           });
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::READING_STATS: {
+      tickReadingStatsSession();
+      const std::string cachePath = getBookCachePath();
+      BookReadingStats displayBookStats = BookReadingStats::load(cachePath);
+      GlobalReadingStats displayGlobalStats = GlobalReadingStats::load();
+      const uint32_t readingSeconds = readingStatsAccumulatedMs / 1000UL;
+      if (readingSeconds >= 60) {
+        displayBookStats.sessionCount++;
+        displayGlobalStats.totalSessions++;
+      }
+      if (readingSeconds >= 10) {
+        displayBookStats.totalReadingSeconds += readingSeconds;
+        displayBookStats.totalPagesTurned += readingStatsPagesTurned;
+        displayGlobalStats.totalReadingSeconds += readingSeconds;
+        displayGlobalStats.totalPagesTurned += readingStatsPagesTurned;
+      }
+      startActivityForResult(
+          std::make_unique<ReadingStatsActivity>(renderer, mappedInput, epub ? epub->getPath() : std::string{},
+                                                 getBookTitle(), getBookAuthor(), displayBookStats, displayGlobalStats),
+          [this](const ActivityResult&) { requestUpdate(); });
       break;
     }
     case EpubReaderMenuActivity::MenuAction::DICTIONARY: {

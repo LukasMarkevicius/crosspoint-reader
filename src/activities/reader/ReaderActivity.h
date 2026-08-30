@@ -7,12 +7,20 @@
 
 #include "EndOfBookOptions.h"
 #include "activities/Activity.h"
+#include "reading_stats/ReadingStatsUtils.h"
 
 class ReaderActivity : public Activity {
  protected:
   std::string bookPath;
   int pagesUntilFullRefresh = 0;
   bool forcedRefreshPending = false;
+  unsigned long readingStatsLastSampleMs = 0;
+  unsigned long readingStatsLastInteractionMs = 0;
+  uint32_t readingStatsAccumulatedMs = 0;
+  uint32_t readingStatsPagesTurned = 0;
+  bool readingStatsSessionOpen = false;
+  bool hasReadingStatsSessionStart = false;
+  ReadingStatsDateTime readingStatsSessionStart;
 
   std::unique_ptr<EndOfBookOptions> endOfBookOptions;
   std::atomic<bool> endOfBookOptionsReady{false};
@@ -24,6 +32,7 @@ class ReaderActivity : public Activity {
   virtual std::string getBookTitle() const = 0;
   virtual std::string getBookAuthor() const { return ""; }
   virtual std::string getBookThumbBmpPath() const { return ""; }
+  virtual std::string getBookCachePath() const = 0;
 
   virtual bool handleFormatInput() { return false; }
   virtual bool pageTurn(bool isForward) = 0;
@@ -40,6 +49,10 @@ class ReaderActivity : public Activity {
   bool handleEndOfBookPageTurn(bool prevTriggered, bool nextTriggered);
   void clearEndOfBookOptionsIfNeeded();
   void disableFastInitialRefresh();
+  void beginReadingStatsSession();
+  void tickReadingStatsSession();
+  void noteReadingStatsInteraction(uint16_t pageTurns = 0);
+  void flushReadingStatsSession();
 
  public:
   ~ReaderActivity() override = default;

@@ -30,6 +30,7 @@
 #include "newsletters/NewsletterStore.h"
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
+#include "util/ClockDateTimeCompat.h"
 
 namespace {
 
@@ -890,8 +891,8 @@ void SleepActivity::renderClockUnavailableSleepScreen() const {
 }
 
 void SleepActivity::renderClockSleepScreen() const {
-  HalClock::DateTime now;
-  if (!halClock.getDateTime(now, SETTINGS.clockUtcOffsetQ)) {
+  ClockDateTimeCompat now;
+  if (!readClockDateTimeCompat(now, SETTINGS.clockUtcOffsetQ)) {
     LOG_ERR("SLP", "Clock sleep screen unavailable: RTC date/time not available");
     renderClockUnavailableSleepScreen();
     return;
